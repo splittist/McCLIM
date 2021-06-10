@@ -81,6 +81,7 @@ interface management system."
                #:clim-pdf
                #:clim-postscript
                #:mcclim-emacs
+               #:mcclim-jsws
                #:mcclim-franz))
 
 (defmethod perform :after ((op load-op) (c (eql (find-system :mcclim))))

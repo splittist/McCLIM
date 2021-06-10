@@ -11,22 +11,191 @@
 ;;; Port
 
 (defclass jsws-port (basic-port)
-  ((%id :accessor port-id)))
+  ((%id :accessor port-id)
+   (%client
+    :accessor port-client)))
+
+(defclass jsws-pointer (standard-pointer)
+  ())
+
+(defclass jsws-graft (graft)
+  ())
+
+(defmethod make-graft ((port jsws-port) &key (orientation :default) (units :device))
+  (let* ((client (port-client port))
+         (window (make-window client (gensym "ID-") t))
+         (mirror (make-instance 'jsws-mirror :window window))
+         (screen-size (screen-size-from-browser client))
+         (region (make-bounding-rectangle 0 0 (getf screen-size :width) (getf screen-size :height))))
+    (make-instance 'jsws-graft
+                   :port port
+                   :region region
+                   :mirror mirror
+                   :orientation orientation
+                   :units units)))
+
+(defmethod graft ((port jsws-port))
+  (first (climi::port-grafts port)))
+
+(defclass jsws-window ()
+  ((%client
+    :initarg :client
+    :reader window-client)
+   (%id
+    :initarg :id
+    :reader window-id)))
+
+(defun make-window (client id &optional canvasp)
+  (when canvasp
+    (send-command client "createWindow" (list (princ-to-string id) "fabricCanvas")))
+  (make-instance 'jsws-window :client client :id id))
+
+(defclass jsws-mirror ()
+  ((%window
+    :initarg :window
+    :reader mirror-window)))
+
+(defclass jsws-frame-manager (standard-frame-manager)
+  ())
 
 (defmethod find-port-type ((type (eql :jsws)))
   (values 'jsws-port 'identity)) ; FIXME
 
 (defmethod initialize-instance :after ((port jsws-port) &rest initargs)
   (declare (ignore initargs))
-  (setf (port-id port) (gensym "JSWS-PORT-")))
+  (setf (port-id port) (gensym "JSWS-PORT-"))
+  (push (make-instance 'jsws-frame-manager :port port)
+        (slot-value port 'climi::frame-managers))
+  (setf (slot-value port 'pointer)
+        (make-instance 'jsws-pointer :port port))
+  (initialize-jsws port))
 
-;;; Sheet
+(defun initialize-jsws (port)
+  (setf (port-client port)
+        (first (hunchensocket:clients (first *sockets*)))) ; FIXME
+  (make-graft port)
+  (when clim-sys:*multiprocessing-p*
+    (clim-sys:make-process
+     (lambda ()
+       (loop (with-simple-restart
+                 (restart-event-loop "Restart CLIM's event loop")
+               (loop (process-next-event port)))))
+     :name (format nil "~S's event process" port))))
 
-;;; Mirror
+(defmethod process-next-event ((port jsws-port) &key wait-function (timeout nil))
+  (when (climi::maybe-funcall wait-function)
+    (return-from process-next-event
+      (values nil :wait-function)))
+  (let ((event (get-event port timeout))K) ; FIXME TODO (receive-if ...)
+    (case event
+      ((nil)
+       (if (climi::maybe-funcall wait-function)
+           (values nil :wait-function)
+           (values nil :timeout)))
+      ((t)
+       (values nil :wait-function))
+      (otherwise
+       (prog1 t
+         (distribute-event port event))))))
 
-;;; Graft
+(defparameter *character-name-translations*
+  '(("Alt" :alt)
+    ("CapsLock" :caps-lock)
+    ("Control" :control)
+    ("Meta" :meta)
+    ("NumLock" :num-lock)
+    ("ScrollLock" :scroll-lock)
+    ("Shift" :shift)
+    ("Hyper" :hyper)
+    ("Super" :super)
+    ("Enter" :return)
+    ("Tab" :tab)
+    ("ArrowDown" :down)
+    ("ArrowLeft" :left)
+    ("ArrowRight" :right)
+    ("ArrowUp" :up)
+    ("End" :end)
+    ("Home" :home)
+    ("PageDown" :page-down)
+    ("PageUp" :page-up)
+    ("Backspace" :backspace)
+    ("Clear" :clear)
+    ("Delete" :delete)
+    ("Insert" :insert)
+    ("Redo" :redo)
+    ("Undo" :undo)
+    ("Cancel" :cancel)
+    ("ContextMenu" :menu)
+    ("Escape" :escape)
+    ("Execute" :execute)
+    ("Find" :find)
+    ("Help" :help)
+    ("Pause" :pause)
+    ("Select" :select)
+    ("F1" :f1)
+    ("F2" :f2)
+    ("F3" :f3)
+    ("F4" :f4)
+    ("F5" :f5)
+    ("F6" :f6)
+    ("F7" :f7)
+    ("F8" :f8)
+    ("f9" :f9)
+    ("F10" :f10)
+    ("F11" :f11)
+    ("F12" :f12)))
 
-;;; Medium
+(defun process-name (event)
+  (let* ((name (getf event :char))
+         (loc (getf event :loc))) ; 0 standard 1 left 2 right 3 numpad
+    (if (= 1 (length name))
+        (values (character name) (intern name :keyword))
+        (let ((base-name
+                (second
+                 (assoc name *character-name-translations* :test #'string=))))
+          (values nil (or base-name (intern name :keyword))))))) ; FIXME
+
+(defun get-event (port wait-function &optional (timeout nil))
+  (flet ((eventp (item) (eq :event (car item))))
+    (let ((event (receive-if #'eventp timeout)))
+      (case (second event)
+        ((:key-press-event :key-release-event)
+         (multiple-value-bind (character name)
+             (process-name event)
+           (make-instance (if (eq :key-press-event (car event))
+                              'key-press-event
+                              'key-release-event)
+                          :key-character character
+                          :key-name name
+                          :modifier-state (getf event :mod)
+                          :sheet (port-keyboard-input-focus port))))
+        ((:pointer-button-press-event :pointer-button-release-event)
+         (make-instance (if (eq :pointer-button-press-event (car event))
+                            'pointer-button-press-event
+                            'pointer-button-release-event)
+                        :button (getf event :but)
+                        :x (getf event :x)
+                        :y (getf event :y)
+                        :pointer (port-pointer port)
+                        :sheet (graft port))) ; FIXME
+        ((:pointer-enter-event :pointer-exit-event)
+         (make-instance (if (eq :pointer-enter-event (car event))
+                            'pointer-enter-event
+                            'pointer-exit-event)
+                        :button (getf event :but)
+                        :x (getf event :x)
+                        :y (getf event :y)
+                        :pointer (port-pointer port)
+                        :sheet (graft port))) ; FIXME
+        (:pointer-move-event
+         (make-instance 'pointer-move-event
+                        :button (getf event :but)
+                        :x (getf event :x)
+                        :y (getf event :y)
+                        :pointer (port-pointer port)
+                        :sheet (graft port))) ; FIXME - all the same, too
+        (t
+         (climi::maybe-funcall wait-function))))))
 
 (defclass jsws-medium (basic-medium)
   ())
@@ -34,10 +203,15 @@
 (defmethod make-medium ((port jsws-port) sheet)
   (make-instance 'jsws-medium :port port :sheet sheet))
 
-(defmethod medium-drawable ((medium jsws-medium))
-  (first (hunchensocket:clients (first *ports*)))) ;;; FIXME DEBUG
+(defun dummy-window ()
+  (make-instance 'jsws-window
+                 :client (first (hunchensocket:clients (first *sockets*)))
+                 :id "canvas"))
 
-;;; Ws
+(defmethod medium-drawable ((medium jsws-medium))
+  (mirror-window (slot-value (graft (port medium)) 'climi::mirror))) ;;; FIXME DEBUG
+
+;;; INPUT
 
 (defvar *mailboxes-lock* (bt:make-lock "mailboxes lock"))
 
@@ -100,15 +274,25 @@
   (setf *tag-counter* (mod (1+ *tag-counter*) (expt 2 16))))
 
 (defun text-size-from-browser (medium string text-style)
-  (let ((client (medium-drawable medium))
-        (tag (make-tag))
-        (options (jsws-text-style text-style)))
+  (let* ((window (medium-drawable medium))
+         (client (window-client window))
+         (id (window-id window))
+         (tag (make-tag))
+         (options (jsws-text-style text-style)))
     (alexandria:appendf options (list "left" 0 "top" 0))
-    (send-command client "textSize" (list string (jsobj options) tag))
+    (send-command client "textSize" (list (princ-to-string id) string (jsobj options) tag))
     (let ((response
             (receive-if #'(lambda (msg) (and (eq :text-size (first msg))
                                              (eql tag (second msg)))))))
       (list (third response) (fourth response)))))
+
+(defun screen-size-from-browser (client)
+  (let ((tag (make-tag)))
+    (send-command client "screenSize" (list tag))
+    (let ((response
+            (receive-if #'(lambda (msg) (and (eq :screen-size (first msg))
+                                             (eql tag (second msg)))))))
+      (nthcdr 2 response))))
 
 (defvar *thread* nil)
 
@@ -117,26 +301,32 @@
 (defclass client (hunchensocket:websocket-client)
   ())
 
-(defclass ws-port (hunchensocket:websocket-resource)
-  ((%name :initarg :name :initform "/port" :accessor port-name))
+(defclass ws-socket (hunchensocket:websocket-resource)
+  ((%name :initarg :name :initform "/port" :accessor socket-name))
   (:default-initargs :client-class 'client))
 
-(defvar *ports* (list (make-instance 'ws-port)))
+(defvar *sockets* (list (make-instance 'ws-socket)))
 
-(defun find-port (request)
-  (find (hunchentoot:script-name request) *ports* :test #'string= :key #'port-name))
+(defun find-socket (request)
+  (find (hunchentoot:script-name request) *sockets* :test #'string= :key #'socket-name))
 
-(pushnew 'find-port hunchensocket:*websocket-dispatch-table*)
+(defmethod hunchensocket:client-connected ((socket ws-socket) client)
+  (format t "~A has joined ~A"  client (socket-name socket)))
 
-(defmethod hunchensocket:client-connected ((port ws-port) client)
-  (format t "~A has joined ~A"  client (port-name port)))
+(defmethod hunchensocket:client-disconnected ((socket ws-socket) client)
+  (format t "~A has left ~A" client (socket-name socket)))
 
-(defmethod hunchensocket:client-disconnected ((port ws-port) client)
-  (format t "~A has left ~A" client (port-name port)))
-
-(defmethod hunchensocket:text-message-received ((port ws-port) client message)
+(defmethod hunchensocket:text-message-received ((socket ws-socket) client message)
   (format t "~&Received '~A' from ~A~%" message client)
   (send *thread* (read-from-string message)))
+
+(defun start-server ()
+  (pushnew 'find-socket hunchensocket:*websocket-dispatch-table*)
+  (hunchentoot:start *server*)
+  (setf *thread* (bt:current-thread)))
+
+(defun stop-server ()
+  (hunchentoot:stop *server*))
 
 ;;;
 
@@ -146,10 +336,20 @@
 (defun jsobj (args)
   (apply #'st-json:jso args))
 
-(defun send-command (client command args)
-  (let ((msg (st-json:write-json-to-string (list (list command args)))))
-    (print msg)
-    (hunchensocket:send-text-message client msg)))
+(defgeneric send-command (destination command args)
+  (:method ((window jsws-window) command args)
+    (let ((client (window-client window))
+          (msg (st-json:write-json-to-string
+                (list
+                 (list command
+                       (list (princ-to-string (window-id window))
+                             args))))))
+      (print msg) ; DEBUG
+      (hunchensocket:send-text-message client msg)))
+  (:method ((client client) command args)
+    (let ((msg (st-json:write-json-to-string (list (list command args)))))
+      (print msg) ; DEBUG
+      (hunchensocket:send-text-message client msg))))
 
 (defun jsws-client (thing)
   (etypecase thing
@@ -283,11 +483,21 @@ four-element vector: width, height, ascent, descent")
       (incf total-height line-height)
       (alexandria:maxf max-width width))))
 
+(defmethod climb:text-bounding-rectangle* ((medium jsws-medium) string
+                                           &key text-style start end align-x align-y direction)
+  (declare (ignore align-x align-y direction))
+  (let* ((sub (subseq string (or start 0) (or end (length string))))
+         (text-style (or text-style (medium-text-style medium))))
+    (multiple-value-bind (width height x y baseline)
+        (text-size medium sub :text-style text-style)
+      (declare (ignore x y))
+      (values 0 (- baseline) width (- height baseline)))))
+
 (defmethod text-style-fixed-width-p ((text-style standard-text-style) (medium jsws-medium))
   (eq :fix (text-style-family text-style)))
 
 (defmethod medium-draw-line* ((medium jsws-medium) x1 y1 x2 y2)
-  (let* ((client (medium-drawable medium))
+  (let* ((window (medium-drawable medium))
          (ink (medium-ink medium))
          (color (jsws-color ink))
          (line-style (medium-line-style medium))
@@ -307,10 +517,10 @@ four-element vector: width, height, ascent, descent")
       (alexandria:appendf options (list "strokeLineCap" stroke-line-cap)))
     (when stroke-dash-array
       (alexandria:appendf options  (list "strokeDashArray" stroke-dash-array)))
-    (send-command client "drawLine" (list points (jsobj options)))))
+    (send-command window "drawLine" (list points (jsobj options)))))
 
 (defmethod medium-draw-rectangle* ((medium jsws-medium) left top right bottom filled)
-  (let* ((client (medium-drawable medium))
+  (let* ((window (medium-drawable medium))
          (ink (medium-ink medium))
          (color (jsws-color ink))
          (line-style (medium-line-style medium))
@@ -334,10 +544,10 @@ four-element vector: width, height, ascent, descent")
              (alexandria:appendf args (list "strokeLineCap" stroke-line-cap)))
            (when stroke-dash-array
              (alexandria:appendf args (list "strokeDashArray" stroke-dash-array)))))
-    (send-command client "drawRect" (jsobj args))))
+    (send-command window "drawRect" (jsobj args))))
 
 (defmethod medium-draw-circle* ((medium jsws-medium) center-x center-y radius start-angle end-angle filled)
-  (let* ((client (medium-drawable medium))
+  (let* ((window (medium-drawable medium))
          (ink (medium-ink medium))
          (color (jsws-color ink))
          (args (list "left" (- center-x radius)
@@ -364,10 +574,10 @@ four-element vector: width, height, ascent, descent")
              (alexandria:appendf args (list "strokeLineCap" stroke-line-cap)))
            (when stroke-dash-array
              (alexandria:appendf args (list "strokeDashArray" stroke-dash-array)))))
-    (send-command client "drawCircle" (jsobj args))))
+    (send-command window "drawCircle" (jsobj args))))
 
 (defmethod medium-draw-ellipse* ((medium jsws-medium) center-x center-y radius-1-dx radius-1-dy radius-2-dx radius-2-dy start-angle end-angle filled)
-  (let* ((client (medium-drawable medium))
+  (let* ((window (medium-drawable medium))
          (ink (medium-ink medium))
          (color (jsws-color ink))
          (rx (sqrt (+ (expt radius-1-dx 2) (expt radius-1-dy 2))))
@@ -397,24 +607,24 @@ four-element vector: width, height, ascent, descent")
              (alexandria:appendf args (list "strokeLineCap" stroke-line-cap)))
            (when stroke-dash-array
              (alexandria:appendf args (list "strokeDashArray" stroke-dash-array)))))
-    (send-command client "drawEllipse" (jsobj args))))
+    (send-command window "drawEllipse" (jsobj args))))
 
 (defmethod medium-draw-point* ((medium jsws-medium) x y)
-  (let* ((client (medium-drawable medium))
+  (let* ((window (medium-drawable medium))
          (ink (medium-ink medium))
          (radius (/ (jsws-stroke-width (medium-line-style medium)) 2))
          (args (list "left" (- x radius)
                      "top" (- y radius)
                      "radius" radius
                      "fill" (jsws-color ink))))
-    (send-command client "drawCircle" (jsobj args))))
+    (send-command window "drawCircle" (jsobj args))))
 
 (defun polypoints (coord-seq)
   (loop for (x y) on (coerce coord-seq 'list) by #'cddr
         collecting (st-json:jso "x" x "y" y)))
 
 (defmethod medium-draw-polygon* ((medium jsws-medium) coord-seq closed filled)
-  (let* ((client (medium-drawable medium))
+  (let* ((window (medium-drawable medium))
          (ink (medium-ink medium))
          (color (jsws-color ink))
          (points (polypoints coord-seq))
@@ -442,7 +652,7 @@ four-element vector: width, height, ascent, descent")
             (alexandria:appendf options (list "strokeLineCap" stroke-line-cap)))
           (when stroke-dash-array
             (alexandria:appendf options (list "strokeDashArray" stroke-dash-array)))))
-    (send-command client command (list points (jsobj options)))))
+    (send-command window command (list points (jsobj options)))))
 
 (defun jsws-font-family (family)
   (ecase family
@@ -463,11 +673,11 @@ four-element vector: width, height, ascent, descent")
 
 (defun jsws-font-style (face)
   (cond
-    ((null face) (jsws-font-face (text-style-face *default-text-style*)))
+    ((null face) (jsws-font-style (text-style-face *default-text-style*)))
     ((eq :roman face) "normal")
     ((eq :italic face) "italic")
     ((and (consp face) (find :italic face)) "italic")
-    (t "nomral")))
+    (t "normal")))
 
 (defun jsws-font-weight (face)
   (if (or (eq face :bold)
@@ -484,7 +694,7 @@ four-element vector: width, height, ascent, descent")
           "fontWeight" (jsws-font-weight face))))
 
 (defmethod medium-draw-text* ((medium jsws-medium) string x y start end align-x align-y toward-x toward-y transform-glyphs)
-  (let* ((client (medium-drawable medium))
+  (let* ((window (medium-drawable medium))
          (ink (medium-ink medium))
          (color (jsws-color ink))
          (str (subseq string start end))
@@ -494,9 +704,9 @@ four-element vector: width, height, ascent, descent")
     (multiple-value-bind (width height final-x final-y baseline)
         (text-size medium string :text-style style)
       (declare (ignore final-x final-y))
-      (let* ((_fontSizeFraction 222) ; from Fabric js
+      (let* ((_fontSizeFraction 0.222) ; from Fabric js
              (lineHeight 1.16) ; ditto
-             (finagling-factor (- baseline(/ (* height (- 1 _fontSizeFraction)) lineHeight))))
+             (finagling-factor (- baseline (/ (* height (- 1 _fontSizeFraction)) lineHeight))))
         (incf y finagling-factor))
       (ecase align-y
         (:top (incf y baseline))
@@ -510,18 +720,59 @@ four-element vector: width, height, ascent, descent")
       (alexandria:appendf options (list "left" x
                                         "top" (- y size)))
       (alexandria:appendf options (list "fill" color))
-      (send-command client "drawText" (list str (jsobj options))))))
+      (send-command window "drawText" (list str (jsobj options))))))
 
 (defun text-text ()
-  (clear-text-caches)
-  (with-drawing-options (*m* :ink +red+)
-    (medium-draw-line* *m* 0 100 500 100))
-  (medium-draw-text* *m* "Hello jello" 50 100 0 nil :left :top 0 0 nil)
-  (medium-draw-text* *m* "Hello jello" 150 100 0 nil :left :bottom 0 0 nil)
-  (medium-draw-text* *m* "Hello jello" 250 100 0 nil :left :center 0 0 nil)
-  (medium-draw-text* *m* "Hello jello" 350 100 0 nil :left :baseline 0 0 nil)
-  (with-drawing-options (*m* :ink +red+)
-    (medium-draw-line* *m* 200 200 200 500))
-  (medium-draw-text* *m* "Hello jello" 200 250 0 nil :left :baseline 0 0 nil)
-  (medium-draw-text* *m* "Hello jello" 200 350 0 nil :center :baseline 0 0 nil)
-  (medium-draw-text* *m* "Hello jello" 200 450 0 nil :right :baseline 0 0 nil))
+  (let ((*m* (make-medium (make-instance 'jsws-port) nil)))
+    (clear-text-caches)
+    (with-drawing-options (*m* :ink +red+)
+      (medium-draw-line* *m* 0 100 500 100))
+    (medium-draw-text* *m* "Hello jello" 50 100 0 nil :left :top 0 0 nil)
+    (medium-draw-text* *m* "Hello jello" 150 100 0 nil :left :bottom 0 0 nil)
+    (medium-draw-text* *m* "Hello jello" 250 100 0 nil :left :center 0 0 nil)
+    (medium-draw-text* *m* "Hello jello" 350 100 0 nil :left :baseline 0 0 nil)
+    (with-drawing-options (*m* :ink +red+)
+      (medium-draw-line* *m* 200 200 200 500))
+    (medium-draw-text* *m* "Hello jello" 200 250 0 nil :left :baseline 0 0 nil)
+    (medium-draw-text* *m* "Hello jello" 200 350 0 nil :center :baseline 0 0 nil)
+    (medium-draw-text* *m* "Hello jello" 200 450 0 nil :right :baseline 0 0 nil)))
+
+(defun test ()
+  (let* ((p (make-instance 'jsws-port))
+         (fm (first (slot-value p 'climi::frame-managers)))
+         (*default-server-path* (list :jsws)))
+    (with-frame-manager (fm) (clim-demo:demodemo))))
+
+(defun clean-up ()
+  (let ((processes (remove-if-not
+                    #'(lambda (thread)
+                        (alexandria:starts-with-subseq "#<JSWS" (bt:thread-name thread)))
+                    (bt:all-threads))))
+    (map nil #'bt:destroy-thread processes)))
+
+(defclass test-stream (sheet-leaf-mixin
+                       sheet-parent-mixin
+                       sheet-transformation-mixin
+                       sheet-mute-input-mixin
+                       sheet-mute-repainting-mixin
+                       climi::updating-output-stream-mixin
+                       basic-sheet
+                       standard-extended-output-stream
+                       extended-input-stream
+                       permanent-medium-sheet-output-mixin
+                       standard-output-recording-stream)
+  ((port :initform nil :initarg port :accessor port)))
+
+(defmacro with-output-to-browser ((stream-var) &body body)
+  (let ((cont (gensym)))
+    `(flet ((,cont (,stream-var)
+              ,@body))
+       (declare (dynamic-extent #',cont))
+       (invoke-with-output-to-browser #',cont))))
+
+(defun invoke-with-output-to-browser (continuation)
+  (let ((*default-server-path* (list :jsws)))
+    (with-port (port :jsws)
+      (let ((stream (make-instance 'test-stream :port port)))
+        (sheet-adopt-child (find-graft :port port) stream)
+        (funcall continuation stream)))))

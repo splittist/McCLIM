@@ -20,57 +20,110 @@
     </style>
 </head>
 <body>
-    <canvas id="canvas"></canvas>
     <script src="http://cdnjs.cloudflare.com/ajax/libs/fabric.js/4.4.0/fabric.min.js"></script>
     <script>
-        const canvas = new fabric.Canvas('canvas')
 
-        canvas.setDimensions({width: window.innerWidth, height: window.innerHeight})
+        let windows = {}
 
         function drawLine(args) {
-            let line = new fabric.Line(args[0],args[1])
-            canvas.add(line)
+            let w = windows[args[0]]
+            let line = new fabric.Line(args[1][0],args[1][1])
+            w.add(line)
         }
 
         function drawRect(args) {
-            let rect = new fabric.Rect(args)
-            canvas.add(rect)
+            let w = windows[args[0]]
+            let rect = new fabric.Rect(args[1])
+            w.add(rect)
         }
 
         function drawCircle(args) {
-            let circle = new fabric.Circle(args)
-            canvas.add(circle)
+            let w = windows[args[0]]
+            let circle = new fabric.Circle(args[1])
+            w.add(circle)
         }
 
         function drawEllipse(args) {
-            let ellipse = new fabric.Ellipse(args)
-            canvas.add(ellipse)
+            let w = windows[args[0]]
+            let ellipse = new fabric.Ellipse(args[1])
+            w.add(ellipse)
         }
 
         function drawPolygon(args) {
-            let polygon = new fabric.Polygon(args[0], args[1])
-            canvas.add(polygon)
+            let w = windows[args[0]]
+            let polygon = new fabric.Polygon(args[1], args[2])
+            w.add(polygon)
         }
 
         function drawPolyline(args) {
-            let polyline = new fabric.Polyline(args[0], args[1])
-            canvas.add(polyline)
+            let w = windows[args[0]]
+            let polyline = new fabric.Polyline(args[1], args[2])
+            w.add(polyline)
         }
 
         function drawText(args) {
-            let text = new fabric.Text(args[0], args[1])
-            canvas.add(text)
+            let w = windows[args[0]]
+            let text = new fabric.Text(args[1][0], args[1][1])
+            w.add(text)
+        }
+
+        const defaultWindowProperties = {
+            position: 'absolute',
+            top: '0',
+            left: '0',
+            width: `${window.innerWidth}px`,
+            height: `${window.innerHeight}px`,
+            zIndex: 'auto',
+        }
+
+        function createWindow(args) {
+            let type = args[1], id = args[0]
+            if (type == 'fabricCanvas') {
+                const el = document.createElement('canvas')
+                const childId = `${id}-child`
+                el.id = childId
+                document.body.appendChild(el)
+                const c = new fabric.Canvas(childId)
+                c.setDimensions({width: window.innerWidth, height: window.innerHeight})
+                el.parentElement.id = id // attach ID to parent div
+                windows[id] = c
+            } else {
+                const el = document.createElement(type)
+                el.id = id
+                const options = {...defaultWindowProperties, ...args[2]}
+                Object.entries(options).forEach(([key, value]) => {
+                    el.style[key] = value
+                })
+                document.body.appendChild(el)
+                windows[id] = el
+            }                
+        }
+
+        function destroyWindow(args) {
+            let w = windows[args]
+            let el = document.getElementById(args)
+            if (w instanceof fabric.Canvas) {
+                w.dispose()
+            }
+            el.remove()
+            delete windows[args]
         }
 
         function textSize(args) {
-            const string = args[0]
-            const options = args[1]
-            const ctx = canvas.getContext('2d')
+            const id = args[0]
+            const string = args[1]
+            const options = args[2]
+            const tag = args[3]
+            const ctx = windows[id].getContext('2d')
             ctx.font = `${options.fontStyle} ${options.fontWeight} ${options.fontSize}px ${options.fontFamily}`
             let metrics = ctx.measureText(string)
             let width = Math.abs(metrics.actualBoundingBoxLeft) + Math.abs(metrics.actualBoundingBoxRight)
             let height = Math.abs(metrics.actualBoundingBoxAscent) + Math.abs(metrics.actualBoundingBoxDescent)
-            ws.send(`(:text-size ${args[2]} ${width} ${height})`)
+            ws.send(`(:text-size ${tag} ${width} ${height})`)
+        }
+
+        function screenSize(args) {
+            ws.send(`(:screen-size ${args} :width ${window.innerWidth} :height ${window.innerHeight})`)
         }
 
         const ws = new WebSocket('ws://127.0.0.1:4242/port')
@@ -85,6 +138,9 @@
                 drawPolyline: drawPolyline,
                 drawText: drawText,
                 textSize: textSize,
+                createWindow: createWindow,
+                destroyWindow: destroyWindow,
+                screenSize: screenSize,
             }
             let messages = JSON.parse(event.data)
             messages.forEach(([fName, ...args]) => fns[fName](...args))
@@ -97,6 +153,77 @@
         ws.onclose = () => {
             console.log('Disconnected')
         }
+
+        function makeModifierState(e) {
+            let result = 0
+            if (e.shiftKey)                   { result |= 0x0100 }
+            if (e.ctrlKey)                    { result |= 0x0200 }
+            if (e.metaKey)                    { result |= 0x0400 }
+            if (e.getModifierState('Super'))  { result |= 0x0800 }
+            if (e.getModifierState('Hyper'))  { result |= 0x1000 }
+            if (e.altKey)                     { result |= 0x2000 }
+            return result
+        }
+
+        function makeButtonState(e) {
+            let result = 0
+            const buttons = e.buttons
+            if ( buttons & 1 ) { result |= 1 }
+            if ( buttons & 2 ) { result |= 4 }
+            if ( buttons & 4 ) { result |= 2 }
+            return result
+        }
+
+        const windowListeners = {
+            'keydown': handleKeydown,
+            'keyup': handleKeyup,
+            'pointerdown': handlePointerdown,
+            'pointerup': handlePointerup,
+            'pointerenter': handlePointerenter,
+            'pointerleave': handlePointerleave,
+            'pointermove': handlePointermove,
+        }
+
+        function addWindowListeners() {
+            Object.entries(windowListeners).forEach(([type, callback]) => {
+                addGlobalEventListener(type, callback)
+            })
+        }
+
+        function addGlobalEventListener(type, callback) {
+            document.addEventListener(type, e => {
+                callback(e)
+            })
+        }
+
+        function handleKeydown(e) {
+            ws.send(`(:event :key-press-event :char ${e.key} :mod ${makeModifierState(e)} :loc ${e.location})`)
+        }
+
+        function handleKeyup(e) {
+            ws.send(`(:event :key-release-event :char ${e.key} :mod ${makeModifierState(e)} :loc ${e.location})`)
+        }
+
+        function handlePointerdown(e) {
+            ws.send(`(:event :pointer-button-press-event :but ${makeButtonState(e)} :x ${e.clientX} :y ${e.clientY} :mod ${makeModifierState(e)})`)
+        }
+
+        function handlePointerup(e) {
+            ws.send(`(:event :pointer-button-release-event :but ${makeButtonState(e)} :x ${e.clientX} :y ${e.clientY} :mod ${makeModifierState(e)})`)
+        }
+
+        function handlePointerenter(e) {
+            ws.send(`(:event :pointer-enter-event :but ${makeButtonState(e)} :x ${e.clientX} :y ${e.clientY} :mod ${makeModifierState(e)})`)
+        }
+
+        function handlePointerleave(e) {
+            ws.send(`(:event :pointer-exit-event :but ${makeButtonState(e)} :x ${e.clientX} :y ${e.clientY} :mod ${makeModifierState(e)})`)
+        }
+
+        function handlePointermove(e) {
+            ws.send(`(:event :pointer-move-event :but ${makeButtonState(e)} :x ${e.clientX} :y ${e.clientY} :mod ${makeModifierState(e)})`)
+        }
+
     </script>
 </body>
 </html>

@@ -6,5 +6,5 @@
                "st-json")
   :serial t
   :components ((:file "jsws")
-               (:static-file "index.html"))
+               (:static-file "index.html")))
 
