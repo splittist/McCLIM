@@ -5,6 +5,11 @@
                "hunchensocket"
                "st-json")
   :serial t
-  :components ((:file "jsws")
+  :components ((:file "package")
+               (:file "server")
+               (:file "class")
+               (:file "medium")
+               (:file "input")
+               (:file "jsws")
                (:static-file "index.html")))
 
