@@ -10,6 +10,15 @@
 (defclass jsws-pointer (standard-pointer)
   ())
 
+(defmethod port-grab-pointer ((port jsws-port) (pointer jsws-pointer) sheet &key multiple-window)
+  nil)
+
+(defmethod port-ungrab-pointer ((port jsws-port) (pointer jsws-pointer) sheet)
+  nil)
+
+(defmethod set-sheet-pointer-cursor ((port jsws-port) sheet cursor)
+  nil) ; FIXME
+
 (defclass jsws-graft (graft)
   ())
 

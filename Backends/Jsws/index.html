@@ -33,12 +33,6 @@ function setGraphicsOptions(ctx, options) {
     ctx.setLineDash(options.strokeDashArray ?? [])
 }
 
-// function drawLine(args) {
-//     let w = windows[args[0]]
-//     let line = new fabric.Line(args[1][0],args[1][1])
-//     w.add(line)
-// }
-
 function drawLine(args) {
     const w = windows[args[0]]
     if (w.nodeName !== 'CANVAS') {
@@ -55,12 +49,6 @@ function drawLine(args) {
     ctx.stroke()
     ctx.restore()
     }
-
-// function drawRect(args) {
-//     let w = windows[args[0]]
-//     let rect = new fabric.Rect(args[1])
-//     w.add(rect)
-// }
 
 function drawRect(args) {
     const w = windows[args[0]]
@@ -83,12 +71,6 @@ function drawRect(args) {
     }
     ctx.restore()
 }
-
-// function drawCircle(args) {
-//     let w = windows[args[0]]
-//     let circle = new fabric.Circle(args[1])
-//     w.add(circle)
-// }
 
 function drawCircle(args) {
     const w = windows[args[0]]
@@ -119,12 +101,6 @@ function drawCircle(args) {
     }
     ctx.restore()
 }
-
-// function drawEllipse(args) {
-//     let w = windows[args[0]]
-//     let ellipse = new fabric.Ellipse(args[1])
-//     w.add(ellipse)
-// }
 
 function drawEllipse(args) {
     const w = windows[args[0]]
@@ -158,19 +134,13 @@ function drawEllipse(args) {
     ctx.restore()
 }
 
-// function drawPolygon(args) {
-//     let w = windows[args[0]]
-//     let polygon = new fabric.Polygon(args[1], args[2])
-//     w.add(polygon)
-// }
-
 function drawPolyline(args) {
     const w = windows[args[0]]
     if (w.nodeName !== 'CANVAS') {
         throw new JswsException('Attempt to drawPolyline to non-canvas window')
     }
-    const points = args[1]
-    const options = args[2]
+    const points = args[1][0]
+    const options = args[1][1]
     const start = points[0]
     const rest = points.slice(1)
     const ctx = w.getContext('2d')
@@ -188,12 +158,6 @@ function drawPolyline(args) {
     }
     ctx.restore()
 }
-
-// function drawPolyline(args) {
-//     let w = windows[args[0]]
-//     let polyline = new fabric.Polyline(args[1], args[2])
-//     w.add(polyline)
-// }
 
 function drawPolygon(args) {
     const w = windows[args[0]]
@@ -215,12 +179,6 @@ function drawPolygon(args) {
     ctx.fill()
     ctx.restore()
 }
-
-// function drawText(args) {
-//     let w = windows[args[0]]
-//     let text = new fabric.Text(args[1][0], args[1][1])
-//     w.add(text)
-// }
 
 function setTextOptions(ctx, options) {
     ctx.font = `${options.fontStyle ?? 'normal'} ${options.fontWeight ?? 'normal'} ${options.fontSize ?? 10}px ${options.fontFamily ?? 'sans-serif'}`
@@ -275,15 +233,12 @@ function createWindow(args) {
 function destroyWindow(args) {
     let w = windows[args]
     let el = document.getElementById(args)
-    // if (w instanceof fabric.Canvas) {
-    //     w.dispose()
-    // }
     el.remove()
     delete windows[args]
 }
 
 function clearWindow(id) {
-    const w = windows[args]
+    const w = windows[id]
     if (w.nodeName !== 'CANVAS') {
         throw new JswsException('Attempt to clearWindow a non-canvas window')
     }
@@ -335,6 +290,7 @@ ws.onmessage = (event) => {
         screenSize: screenSize,
     }
     let messages = JSON.parse(event.data)
+    //console.log(messages) // DEBUG
     messages.forEach(([fName, ...args]) => fns[fName](...args))
 }
 
@@ -419,6 +375,8 @@ function handlePointermove(e) {
     pointerPosition.y = e.clientY
     ws.send(`(:event :pointer-motion-event :but ${makeButtonState(e)} :x ${e.clientX} :y ${e.clientY} :mod ${makeModifierState(e)})`)
 }
+
+addWindowListeners()
 
     </script>
 </body>

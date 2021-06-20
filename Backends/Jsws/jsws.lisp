@@ -43,6 +43,15 @@
                        standard-output-recording-stream)
   ((port :initform nil :initarg port :accessor port)))
 
+(defclass dom-sheet (sheet-parent-mixin
+                     sheet-transformation-mixin
+                     sheet-multiple-child-mixin
+                     top-level-sheet-mixin
+                     permanent-medium-sheet-output-mixin
+                     basic-sheet
+                     standard-extended-input-stream)
+  ((port :initform nil :initarg port :accessor port)))
+
 (defmacro with-output-to-browser ((stream-var) &body body)
   (let ((cont (gensym)))
     `(flet ((,cont (,stream-var)
@@ -128,3 +137,15 @@
   (:pane :application
          :scroll-bars nil)
   (:menu-bar nil))
+
+(defun testy ()
+  (clean-up)
+  (clear-text-caches)
+  (drain-events)
+  (setf *p* (make-instance 'jsws-port))
+  (setf *s* (make-instance 'dom-sheet :port *p*))
+  (sheet-adopt-child (find-graft :port *p*) *s*)
+  (setf (sheet-region *s*) +everywhere+)
+  (setf *fm* (first (slot-value *p* 'climi::frame-managers))))
+
+(climi::with-transformed-position 

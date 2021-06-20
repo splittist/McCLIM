@@ -19,10 +19,13 @@
   (/ (* pt 96) 72))
 
 (defun jsws-color (ink)
-  (if ink
-      (multiple-value-bind (r g b a) (color-rgba ink)
-        (format nil "rgba(~F%, ~F%, ~F%, ~F)" (* r 100) (* g 100) (* b 100) a))
-      "none"))
+  (cond
+    ((eq ink +flipping-ink+) "rgba(0,0,0,0)") ; FIXME - interim
+    (ink
+     (multiple-value-bind (r g b a) (color-rgba ink)
+       (format nil "rgba(~F%, ~F%, ~F%, ~F)" (* r 100) (* g 100) (* b 100) a)))
+    (t
+     "none")))
 
 (defun jsws-stroke-width (line-style)
   (let ((unit (line-style-unit line-style))
@@ -218,151 +221,31 @@ four-element vector: width, height, ascent, descent")
           "fontStyle" (jsws-font-style face)
           "fontWeight" (jsws-font-weight face))))
 
-(defmethod medium-draw-line* ((medium jsws-medium) x1 y1 x2 y2)
-  (let* ((window (medium-drawable medium))
-         (ink (medium-ink medium))
-         (color (jsws-color ink))
-         (line-style (medium-line-style medium))
-         (stroke-width (jsws-stroke-width line-style))
-         (stroke-line-join (jsws-stroke-line-join line-style))
-         (stroke-line-cap (jsws-stroke-line-cap line-style))
-         (stroke-dash-array (jsws-stroke-dash-array line-style))
-         (points (list x1 y1 x2 y2))
-         (options '()))
-    (when color
-      (alexandria:appendf options (list "stroke" color)))
-    (when stroke-width
-      (alexandria:appendf options (list "strokeWidth" stroke-width)))
-    (when stroke-line-join
-      (alexandria:appendf options (list "strokeLineJoin" stroke-line-join)))
-    (when stroke-line-cap
-      (alexandria:appendf options (list "strokeLineCap" stroke-line-cap)))
-    (when stroke-dash-array
-      (alexandria:appendf options  (list "strokeDashArray" stroke-dash-array)))
-    (send-command window "drawLine" (list points (jsobj options)))))
-
-(defmethod medium-draw-rectangle* ((medium jsws-medium) left top right bottom filled)
-  (let* ((window (medium-drawable medium))
-         (ink (medium-ink medium))
-         (color (jsws-color ink))
-         (line-style (medium-line-style medium))
-         (stroke-width (jsws-stroke-width line-style))
-         (stroke-line-join (jsws-stroke-line-join line-style))
-         (stroke-line-cap (jsws-stroke-line-cap line-style))
-         (stroke-dash-array (jsws-stroke-dash-array line-style))
-         (args (list "left" left "top" top "width" (- right left) "height" (- bottom top))))
-    (cond (filled
-           (when color
-             (alexandria:appendf args (list "fill" color))))
-          (t
-           (when color
-             (alexandria:appendf args (list "stroke" color)))
-           (when stroke-width
-             (alexandria:appendf args (list "strokeWidth" stroke-width)))
-           (when stroke-line-join
-             (alexandria:appendf args (list "strokeLineJoin" stroke-line-join)))
-           (when stroke-line-cap
-             (alexandria:appendf args (list "strokeLineCap" stroke-line-cap)))
-           (when stroke-dash-array
-             (alexandria:appendf args (list "strokeDashArray" stroke-dash-array)))))
-    (send-command window "drawRect" (jsobj args))))
-
-(defmethod medium-draw-circle* ((medium jsws-medium) center-x center-y radius start-angle end-angle filled)
-  (let* ((window (medium-drawable medium))
-         (ink (medium-ink medium))
-         (color (jsws-color ink))
-         (args (list "x" center-x
-                     "y" center-y
-                     "radius" radius
-                     "startAngle" start-angle
-                     "endAngle" end-angle)))
-    (if filled
-        (when color
-          (alexandria:appendf args (list "fill" color)))
-        (let* ((line-style (medium-line-style medium))
-               (stroke-width (jsws-stroke-width line-style))
-               (stroke-line-join (jsws-stroke-line-join line-style))
-               (stroke-line-cap (jsws-stroke-line-cap line-style))
-               (stroke-dash-array (jsws-stroke-dash-array line-style)))
-          (when color
-            (alexandria:appendf args (list "stroke" color
-                                           "fill" (jsws-color clim:+transparent-ink+))))
-           (when stroke-width
-             (alexandria:appendf args (list "strokeWidth" stroke-width)))
-           (when stroke-line-join
-             (alexandria:appendf args (list "strokeLineJoin" stroke-line-join)))
-           (when stroke-line-cap
-             (alexandria:appendf args (list "strokeLineCap" stroke-line-cap)))
-           (when stroke-dash-array
-             (alexandria:appendf args (list "strokeDashArray" stroke-dash-array)))))
-    (send-command window "drawCircle" (jsobj args))))
-
-(defmethod medium-draw-ellipse* ((medium jsws-medium) center-x center-y radius-1-dx radius-1-dy radius-2-dx radius-2-dy start-angle end-angle filled)
-  (let* ((window (medium-drawable medium))
-         (ink (medium-ink medium))
-         (color (jsws-color ink))
-         (rx (sqrt (+ (expt radius-1-dx 2) (expt radius-1-dy 2))))
-         (ry (sqrt (+ (expt radius-2-dx 2) (expt radius-2-dy 2))))
-         (args (list "x" center-x
-                     "y" center-y
-                     "rx" rx
-                     "ry" ry
-                     "rotation" (atan radius-1-dy radius-1-dx)
-                     "startAngle" start-angle
-                     "endAngle" end-angle)))
-    (if filled
-        (when color
-          (alexandria:appendf args (list "fill" color)))
-        (let* ((line-style (medium-line-style medium))
-               (stroke-width (jsws-stroke-width line-style))
-               (stroke-line-join (jsws-stroke-line-join line-style))
-               (stroke-line-cap (jsws-stroke-line-cap line-style))
-               (stroke-dash-array (jsws-stroke-dash-array line-style)))
-          (when color
-            (alexandria:appendf args (list "stroke" color
-                                           "fill" (jsws-color clim:+transparent-ink+))))
-           (when stroke-width
-             (alexandria:appendf args (list "strokeWidth" stroke-width)))
-           (when stroke-line-join
-             (alexandria:appendf args (list "strokeLineJoin" stroke-line-join)))
-           (when stroke-line-cap
-             (alexandria:appendf args (list "strokeLineCap" stroke-line-cap)))
-           (when stroke-dash-array
-             (alexandria:appendf args (list "strokeDashArray" stroke-dash-array)))))
-    (send-command window "drawEllipse" (jsobj args))))
-
 (defmethod medium-draw-point* ((medium jsws-medium) x y)
-  (let* ((window (medium-drawable medium))
-         (ink (medium-ink medium))
-         (radius (/ (jsws-stroke-width (medium-line-style medium)) 2))
-         (args (list "x" x
-                     "y" y
-                     "radius" radius
-                     "fill" (jsws-color ink))))
-    (send-command window "drawCircle" (jsobj args))))
+  (climi::with-transformed-position ((medium-native-transformation medium) x y)
+    (let* ((window (medium-drawable medium))
+           (ink (medium-ink medium))
+           (radius (/ (jsws-stroke-width (medium-line-style medium)) 2))
+           (args (list "x" x
+                       "y" y
+                       "radius" radius
+                       "fill" (jsws-color ink))))
+      (send-command window "drawCircle" (jsobj args)))))
 
-(defun polypoints (coord-seq)
-  (loop for (x y) on (coerce coord-seq 'list) by #'cddr
-        collecting (st-json:jso "x" x "y" y)))
-
-(defmethod medium-draw-polygon* ((medium jsws-medium) coord-seq closed filled)
-  (let* ((window (medium-drawable medium))
-         (ink (medium-ink medium))
-         (color (jsws-color ink))
-         (points (polypoints coord-seq))
-         (command (if (and (null filled)
-                           (null closed))
-                      "drawPolyline"
-                      "drawPolygon"))
-         (options '()))
-    (if filled
-        (when color
-          (alexandria:appendf options (list "fill" color)))
-        (let* ((line-style (medium-line-style medium))
+(defmethod medium-draw-line* ((medium jsws-medium) x1 y1 x2 y2)
+  (let ((tr (medium-native-transformation medium)))
+    (climi::with-transformed-position (tr x1 y1)
+      (climi::with-transformed-position (tr x2 y2)
+        (let* ((window (medium-drawable medium))
+               (ink (medium-ink medium))
+               (color (jsws-color ink))
+               (line-style (medium-line-style medium))
                (stroke-width (jsws-stroke-width line-style))
                (stroke-line-join (jsws-stroke-line-join line-style))
                (stroke-line-cap (jsws-stroke-line-cap line-style))
-               (stroke-dash-array (jsws-stroke-dash-array line-style)))
+               (stroke-dash-array (jsws-stroke-dash-array line-style))
+               (points (list x1 y1 x2 y2))
+               (options '()))
           (when color
             (alexandria:appendf options (list "stroke" color)))
           (when stroke-width
@@ -372,8 +255,162 @@ four-element vector: width, height, ascent, descent")
           (when stroke-line-cap
             (alexandria:appendf options (list "strokeLineCap" stroke-line-cap)))
           (when stroke-dash-array
-            (alexandria:appendf options (list "strokeDashArray" stroke-dash-array)))))
-    (send-command window command (list points (jsobj options)))))
+            (alexandria:appendf options  (list "strokeDashArray" stroke-dash-array)))
+          (send-command window "drawLine" (list points (jsobj options))))))))
+
+(defmethod medium-draw-rectangle* ((medium jsws-medium) left top right bottom filled)
+  (let ((tr (medium-native-transformation medium)))
+    (if (rectilinear-transformation-p tr)
+        (multiple-value-bind (left top right bottom)
+            (transform-rectangle* tr left top right bottom)
+          (let* ((window (medium-drawable medium))
+                 (ink (medium-ink medium))
+                 (color (jsws-color ink))
+                 (line-style (medium-line-style medium))
+                 (stroke-width (jsws-stroke-width line-style))
+                 (stroke-line-join (jsws-stroke-line-join line-style))
+                 (stroke-line-cap (jsws-stroke-line-cap line-style))
+                 (stroke-dash-array (jsws-stroke-dash-array line-style))
+                 (args (list "left" left "top" top "width" (- right left) "height" (- bottom top))))
+            (cond (filled
+                   (when color
+                     (alexandria:appendf args (list "fill" color))))
+                  (t
+                   (when color
+                     (alexandria:appendf args (list "stroke" color)))
+                   (when stroke-width
+                     (alexandria:appendf args (list "strokeWidth" stroke-width)))
+                   (when stroke-line-join
+                     (alexandria:appendf args (list "strokeLineJoin" stroke-line-join)))
+                   (when stroke-line-cap
+                     (alexandria:appendf args (list "strokeLineCap" stroke-line-cap)))
+                   (when stroke-dash-array
+                     (alexandria:appendf args (list "strokeDashArray" stroke-dash-array)))))
+            (send-command window "drawRect" (jsobj args))))
+        (medium-draw-polygon* medium
+                              (vector left top right top right bottom left bottom left top)
+                              t
+                              filled))))
+
+(defmethod medium-draw-circle* ((medium jsws-medium) center-x center-y radius start-angle end-angle filled)
+  (let* ((ellipse (make-elliptical-arc* center-x center-y
+                                        radius 0
+                                        0 radius
+                                        :start-angle start-angle
+                                        :end-angle end-angle))
+         (transformed-ellipse (transform-region (medium-native-transformation medium) ellipse))
+         (start-angle (ellipse-start-angle transformed-ellipse))
+         (end-angle (ellipse-end-angle transformed-ellipse)))
+    (multiple-value-bind (center-x center-y) (ellipse-center-point* transformed-ellipse)
+      (let* ((window (medium-drawable medium))
+             (ink (medium-ink medium))
+             (color (jsws-color ink))
+             (args (list "x" center-x
+                         "y" center-y
+                         "radius" radius
+                         "startAngle" start-angle
+                         "endAngle" end-angle)))
+        (if filled
+            (when color
+              (alexandria:appendf args (list "fill" color)))
+            (let* ((line-style (medium-line-style medium))
+                   (stroke-width (jsws-stroke-width line-style))
+                   (stroke-line-join (jsws-stroke-line-join line-style))
+                   (stroke-line-cap (jsws-stroke-line-cap line-style))
+                   (stroke-dash-array (jsws-stroke-dash-array line-style)))
+              (when color
+                (alexandria:appendf args (list "stroke" color
+                                               "fill" (jsws-color clim:+transparent-ink+))))
+              (when stroke-width
+                (alexandria:appendf args (list "strokeWidth" stroke-width)))
+              (when stroke-line-join
+                (alexandria:appendf args (list "strokeLineJoin" stroke-line-join)))
+              (when stroke-line-cap
+                (alexandria:appendf args (list "strokeLineCap" stroke-line-cap)))
+              (when stroke-dash-array
+                (alexandria:appendf args (list "strokeDashArray" stroke-dash-array)))))
+        (send-command window "drawCircle" (jsobj args))))))
+
+(defmethod medium-draw-ellipse* ((medium jsws-medium) center-x center-y radius-1-dx radius-1-dy radius-2-dx radius-2-dy start-angle end-angle filled)
+  (let* ((ellipse (make-elliptical-arc* center-x center-y
+                                        radius-1-dx radius-1-dy
+                                        radius-2-dx radius-2-dy
+                                        :start-angle start-angle
+                                        :end-angle end-angle))
+         (transformed-ellipse (transform-region (medium-native-transformation medium) ellipse))
+         (start-angle (ellipse-start-angle transformed-ellipse))
+         (end-angle (ellipse-end-angle transformed-ellipse)))
+    (multiple-value-bind (center-x center-y) (ellipse-center-point* transformed-ellipse)
+      (multiple-value-bind (radius-1-dx radius-1-dy radius-2-dx radius-2-dy)
+          (ellipse-radii transformed-ellipse)
+        (let* ((window (medium-drawable medium))
+               (ink (medium-ink medium))
+               (color (jsws-color ink))
+               (rx (sqrt (+ (expt radius-1-dx 2) (expt radius-1-dy 2))))
+               (ry (sqrt (+ (expt radius-2-dx 2) (expt radius-2-dy 2))))
+               (args (list "x" center-x
+                           "y" center-y
+                           "rx" rx
+                           "ry" ry
+                           "rotation" (atan radius-1-dy radius-1-dx)
+                           "startAngle" start-angle
+                           "endAngle" end-angle)))
+          (if filled
+              (when color
+                (alexandria:appendf args (list "fill" color)))
+              (let* ((line-style (medium-line-style medium))
+                     (stroke-width (jsws-stroke-width line-style))
+                     (stroke-line-join (jsws-stroke-line-join line-style))
+                     (stroke-line-cap (jsws-stroke-line-cap line-style))
+                     (stroke-dash-array (jsws-stroke-dash-array line-style)))
+                (when color
+                  (alexandria:appendf args (list "stroke" color
+                                                 "fill" (jsws-color clim:+transparent-ink+))))
+                (when stroke-width
+                  (alexandria:appendf args (list "strokeWidth" stroke-width)))
+                (when stroke-line-join
+                  (alexandria:appendf args (list "strokeLineJoin" stroke-line-join)))
+                (when stroke-line-cap
+                  (alexandria:appendf args (list "strokeLineCap" stroke-line-cap)))
+                (when stroke-dash-array
+                  (alexandria:appendf args (list "strokeDashArray" stroke-dash-array)))))
+          (send-command window "drawEllipse" (jsobj args)))))))
+
+(defun polypoints (coord-seq)
+  (loop for (x y) on (coerce coord-seq 'list) by #'cddr
+        collecting (st-json:jso "x" x "y" y)))
+
+(defmethod medium-draw-polygon* ((medium jsws-medium) coord-seq closed filled)
+  (let ((tr (medium-native-transformation medium)))
+    (climi::with-transformed-positions (tr coord-seq)
+      (let* ((window (medium-drawable medium))
+             (ink (medium-ink medium))
+             (color (jsws-color ink))
+             (points (polypoints coord-seq))
+             (command (if (and (null filled)
+                               (null closed))
+                          "drawPolyline"
+                          "drawPolygon"))
+             (options '()))
+        (if filled
+            (when color
+              (alexandria:appendf options (list "fill" color)))
+            (let* ((line-style (medium-line-style medium))
+                   (stroke-width (jsws-stroke-width line-style))
+                   (stroke-line-join (jsws-stroke-line-join line-style))
+                   (stroke-line-cap (jsws-stroke-line-cap line-style))
+                   (stroke-dash-array (jsws-stroke-dash-array line-style)))
+              (when color
+                (alexandria:appendf options (list "stroke" color)))
+              (when stroke-width
+                (alexandria:appendf options (list "strokeWidth" stroke-width)))
+              (when stroke-line-join
+                (alexandria:appendf options (list "strokeLineJoin" stroke-line-join)))
+              (when stroke-line-cap
+                (alexandria:appendf options (list "strokeLineCap" stroke-line-cap)))
+              (when stroke-dash-array
+                (alexandria:appendf options (list "strokeDashArray" stroke-dash-array)))))
+        (send-command window command (list points (jsobj options)))))))
 
 (defmethod medium-draw-text* ((medium jsws-medium) string x y start end align-x align-y toward-x toward-y transform-glyphs)
   (let* ((transformation (medium-device-transformation medium))
